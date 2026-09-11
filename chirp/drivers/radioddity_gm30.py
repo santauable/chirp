@@ -1395,6 +1395,21 @@ BANK3_GAP_CHANNEL = 508
 # offset differs from the frequency side.
 SPECIAL_FREQ_CHANNEL_OFFSET = 763   # channel_number = local_index + 763
 SPECIAL_NAME_CHANNEL_OFFSET = 745   # channel_number = local_index + 745
+
+# special_names is addressable down to local index 0 (channel 745),
+# 18 channels before special's own frequency data starts at 763 --
+# channels 745-762 already have real frequency storage of their own,
+# in bank 3 (memory18, since BANK3_CHANNEL_MIN=509 <=745..762<=
+# BANK3_CHANNEL_MAX=762). Read directly off a real unit: that low
+# slice of special_names was clean, untouched blank storage (not
+# corrupted leftover data from something else), and a write/read-back
+# round trip to it left bank 3's own frequency data for those channel
+# numbers, and special_names' own already-used higher entries,
+# untouched. So channels 745-762 can have BOTH a real frequency (from
+# bank 3) and a real name (from this extra slice of special_names) --
+# they're independently-addressed storage, no conflict.
+NAME_ONLY_CHANNEL_MIN = 745
+NAME_ONLY_CHANNEL_MAX = BANK3_CHANNEL_MAX  # 762
 SPECIAL_CHANNEL_MIN = 763
 SPECIAL_CHANNEL_MAX = 999
 
@@ -1559,9 +1574,25 @@ class BaofengUV15Pro(RadioddityGM30):
         'special_names' (type 0x19/0x26); read and write both verified
         round-trip. Anything outside these confirmed ranges isn't
         backed by known storage.
+
+        Names are a separate concern from frequency storage. Besides
+        'memnames' (channels 1-372), 'special_names' is itself
+        addressable a bit further down than 'special' (the frequency
+        side) is -- down to channel 745, 18 channels before 'special'
+        starts at 763 (see NAME_ONLY_CHANNEL_MIN/MAX above). Those 18
+        channels (745-762) already have real frequency storage of
+        their own via bank 3 ('memory18'), so they end up with BOTH a
+        name (from this extra slice of 'special_names') and a
+        frequency (from bank 3) -- independently-addressed storage,
+        no conflict. Verified via a write/read-back round trip against
+        a real unit that didn't disturb bank 3's own data there or
+        special_names' already-used higher entries.
         """
         if 1 <= number <= 372:
             _name = self._memobj.memnames[number - 1]
+        elif NAME_ONLY_CHANNEL_MIN <= number <= SPECIAL_CHANNEL_MAX:
+            ni = number - SPECIAL_NAME_CHANNEL_OFFSET
+            _name = self._memobj.special_names[ni] if 0 <= ni < 372 else None
         else:
             _name = None
         if number == BANK3_GAP_CHANNEL:
@@ -1585,10 +1616,9 @@ class BaofengUV15Pro(RadioddityGM30):
             return (_mem, _name, _mem is not None)
         if SPECIAL_CHANNEL_MIN <= number <= SPECIAL_CHANNEL_MAX:
             fi = number - SPECIAL_FREQ_CHANNEL_OFFSET
-            ni = number - SPECIAL_NAME_CHANNEL_OFFSET
+            # _name already resolved above (NAME_ONLY_CHANNEL_MIN..MAX
+            # covers this whole range too)
             _mem = self._memobj.special[fi] if 0 <= fi < 255 else None
-            _name = (self._memobj.special_names[ni]
-                     if 0 <= ni < 372 else None)
             return (_mem, _name, _mem is not None)
         return (None, None, False)
 
